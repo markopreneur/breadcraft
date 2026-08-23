@@ -54,7 +54,7 @@ async function ai(prompt, sys=null, maxTok=1400, imgB64=null, imgMime=null) {
   const uc=[];
   if(imgB64) uc.push({type:"image",source:{type:"base64",media_type:imgMime,data:imgB64}});
   uc.push({type:"text",text:prompt});
-  const body={model:"claude-sonnet-5-20250514",max_tokens:maxTok,messages:[{role:"user",content:uc}]};
+  const body={model:"claude-sonnet-5",max_tokens:maxTok,messages:[{role:"user",content:uc}]};
   if(sys) body.system=sys;
   const res=await fetch("/api/claude",{
     method:"POST",
