@@ -205,7 +205,9 @@ Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["T
 Rezept für "${cd.name}". Level:${x.lv}|Ofen:${x.of} ${x.temp}°C Bedampfung:${x.bd}|Mehle:${x.ml}
 ${cd.noknead?"No-Knead: nur rühren, keine Knetmaschine, lange Gare erklärt.":""}
 Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":["Schritt..."],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}`;
-    try{setRecipe(xj(await ai(p,null,2200)));}catch(e){setRecipe({_e:e.message});}
+    try{const t=await ai(p,null,3500);const r=xj(t,"obj");
+    if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
+    setRecipe(r);}catch(e){setRecipe({_e:e.message});}
     setLdR(false);
   };
 
