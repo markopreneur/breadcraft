@@ -68,7 +68,7 @@ async function ai(prompt, sys=null, maxTok=1400, imgB64=null, imgMime=null) {
 }
 function xj(txt,t="arr"){
   const c=txt.replace(/^```json\s*/,"").replace(/^```\s*/,"").replace(/\s*```$/,"").trim();
-  if(t==="arr"){const s=c.indexOf("["),e=c.lastIndexOf("]");if(s<0||e<0)throw new Error("Kein JSON-Array");return JSON.parse(c.slice(s,e+1));}
+  if(t==="arr"){const s=c.indexOf("["),e=c.lastIndexOf("]");if(s<0||e<0)throw new Error("Kein JSON-Array. Antwort: "+c.slice(0,300));return JSON.parse(c.slice(s,e+1));}
   else{const s=c.indexOf("{"),e=c.lastIndexOf("}");if(s<0||e<0)throw new Error("Kein JSON-Objekt");return JSON.parse(c.slice(s,e+1));}
 }
 
@@ -194,7 +194,7 @@ ${eq.includes("noknead")?"Mind. 1 No-Knead Rezept (nur rühren, lange Gare).":""
     ${form==="stockbrot"?"STOCKBROT: Teig am Stock über Feuer/Grill, kein Ofen. stockbrot:true, backtemp:Lagerfeuer.":""}
 ${x.pfl?"PFLICHT in allen Rezepten: "+x.pfl:""}
 Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["Tag"],"aktivzeit":"25 Min.","gesamtzeit":"3 Std.","backdauer":"45 Min.","backtemp":"250→220°C oder 'Lagerfeuer/Grill'","noknead":false,"stockbrot":false}]`;
-    try{setCards(xj(await ai(p,null,1400)));}catch(e){setErrC(e.message);}
+    try{setCards(xj(await ai(p,null,3000)));}catch(e){setErrC(e.message);}
     setLdC(false);
   };
 
