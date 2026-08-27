@@ -35,6 +35,54 @@ const ZPTYPEN=[
   {v:"st_2stufen",l:"🌿🌿 Sauerteig 2-stufig"},{v:"mischbrot",l:"🔀 Mischbrot"},
 ];
 
+// ── Illustrationen ───────────────────────────────────────────────────────────
+// Feste Szenen-IDs. Die Bilder liegen unter public/szenen/<id>.webp
+const SZENEN=["zutaten_wiegen","mehl_schuessel","wasser_zugeben","salz_zugeben",
+"anstellgut_hell","anstellgut_dunkel","vorteig_ansetzen_hell",
+"vorteig_ansetzen_dunkel","vorteig_reif_hell","vorteig_reif_dunkel","quellstueck","bruehstueck",
+"bruehstueck_uebergiessen","kochstueck","mischen_loeffel","noknead_ruehren",
+"kneten_hand","kneten_ruehrgeraet","kneten_maschine","kneten_thermomix","fenstertest",
+"autolyse","teig_geblaeht","dehnen_falten","coil_fold","teig_stuerzen","teilen",
+"vorformen","entspannen","gaerkorb_rund","kastenform_einlegen","ofen_vorheizen",
+"einschiessen","bedampfen","backstein","backen","broetchen","dutch_oven",
+"fladen_pfanne","stockbrot","abkuehlen","anschneiden","fertig_laib","fertig_scheiben"];
+const SZ_LISTE=SZENEN.join(", ");
+
+// Ein Schritt: Illustration links, Text rechts, Badges darunter.
+function StepList({schritte}){
+  if(!schritte||!schritte.length) return null;
+  return <div>
+    {schritte.map((st,i)=>{
+      const o = (typeof st==="object" && st!==null);
+      const szene = o && SZENEN.includes(st.szene) ? st.szene : null;
+      const titel = o ? (st.titel||"") : "";
+      const text  = o ? (st.text||"") : String(st);
+      const zeit  = o ? st.zeit : null;
+      const tmp   = o ? st.temp : null;
+      return (
+        <div key={i} style={{display:"flex",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.s}`,alignItems:"flex-start"}}>
+          {szene
+            ? <img src={`/szenen/${szene}.webp`} alt="" loading="lazy"
+                onError={e=>{e.currentTarget.style.display="none";}}
+                style={{width:104,height:104,borderRadius:8,border:`1px solid ${C.b}`,flexShrink:0,objectFit:"cover",background:"#FCF5EA"}}/>
+            : <div style={{width:22,height:22,borderRadius:"50%",background:C.ol,color:C.od,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>{i+1}</div>}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+              <span style={{width:19,height:19,borderRadius:"50%",background:"#8FA98A",color:"#fff",fontSize:10,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</span>
+              {titel&&<span style={{fontSize:13,fontWeight:700,color:C.t,textTransform:"uppercase",letterSpacing:".05em",lineHeight:1.3}}>{titel}</span>}
+            </div>
+            {text&&<div style={{fontSize:12.5,color:C.m,lineHeight:1.6,marginBottom:6}}>{text}</div>}
+            {(zeit||tmp)&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {zeit&&<span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:7,background:"#EFF4F7",color:"#2E4A5A"}}>◷ {zeit}</span>}
+              {tmp&&<span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:7,background:C.ol,color:C.od}}>◈ {tmp}</span>}
+            </div>}
+          </div>
+        </div>
+      );
+    })}
+  </div>;
+}
+
 // ── Farben ───────────────────────────────────────────────────────────────────
 const C={bg:"#F9F7F4",w:"#fff",b:"#E8E5DF",b2:"#D3D1C7",t:"#2C2C2A",m:"#5F5E5A",h:"#B4B2A9",
   o:"#D85A30",od:"#993C1D",ol:"#FDF3EF",g:"#1D9E75",gl:"#EBF7F2",gd:"#085041",
@@ -204,8 +252,12 @@ Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["T
     const p=`Du bist Marcel Paa. NUR JSON-Objekt, keine Backticks.
 Rezept für "${cd.name}". Level:${x.lv}|Ofen:${x.of} ${x.temp}°C Bedampfung:${x.bd}|Mehle:${x.ml}
 ${cd.noknead?"No-Knead: nur rühren, keine Knetmaschine, lange Gare erklärt.":""}
-Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":["Schritt..."],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}`;
-    try{const t=await ai(p,null,3500);const r=xj(t,"obj");
+Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl abwiegen","text":"Max. 2 kurze Zeilen.","zeit":"5 Min.","temp":null}],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}
+
+WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
+${SZ_LISTE}
+"titel" max. 4 Woerter. "text" max. 2 kurze Zeilen. "zeit"/"temp" nur wenn relevant, sonst null.`;
+    try{const t=await ai(p,null,4000);const r=xj(t,"obj");
     if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
     setRecipe(r);}catch(e){setRecipe({_e:e.message});}
     setLdR(false);
@@ -267,10 +319,14 @@ ANPASSUNGSREGELN:
 6. Alle Änderungen im Feld "anpassungen" auflisten
 
 JSON-Format:
-{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":["Schritt 1..."],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}`;
+{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl abwiegen","text":"Max. 2 kurze Zeilen.","zeit":"5 Min.","temp":null}],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}
+
+WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
+${SZ_LISTE}
+"titel" max. 4 Woerter. "text" max. 2 kurze Zeilen.`;
 
     try{
-      const txt=await ai(prompt,sys,2500,adaptImg?.b64,adaptImg?.mime);
+      const txt=await ai(prompt,sys,3500,adaptImg?.b64,adaptImg?.mime);
       setAdaptRes(xj(txt,"obj"));
       setShowAdapt(false);
       // Direkt als Rezept anzeigen
@@ -679,12 +735,7 @@ JSON-Format:
           </div>
           <div style={{marginBottom:"1.2rem"}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Schritt für Schritt</div>
-            {(adaptRes.schritte||[]).map((st,i)=>(
-              <div key={i} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:`1px solid ${C.s}`,fontSize:13,lineHeight:1.7,color:C.m}}>
-                <div style={{width:22,height:22,borderRadius:"50%",background:C.ol,color:C.od,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>{i+1}</div>
-                <div>{st}</div>
-              </div>
-            ))}
+            <StepList schritte={adaptRes.schritte}/>
           </div>
           {adaptRes.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {adaptRes.tipp}</div>}
         </div>}
@@ -722,12 +773,7 @@ JSON-Format:
           </div>
           <div style={{marginBottom:"1.2rem"}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Schritt für Schritt</div>
-            {(recipe.schritte||[]).map((st,i)=>(
-              <div key={i} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:`1px solid ${C.s}`,fontSize:13,lineHeight:1.7,color:C.m}}>
-                <div style={{width:22,height:22,borderRadius:"50%",background:C.ol,color:C.od,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>{i+1}</div>
-                <div>{st}</div>
-              </div>
-            ))}
+            <StepList schritte={recipe.schritte}/>
           </div>
           {recipe.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {recipe.tipp}</div>}
         </div>}
