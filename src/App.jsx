@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 
 // ── Daten ────────────────────────────────────────────────────────────────────
 const T=7;
@@ -50,15 +50,17 @@ const SZ_LISTE=SZENEN.join(", ");
 
 // Ein Schritt: Illustration links, Text rechts, Badges darunter.
 function StepList({schritte}){
-  if(!schritte||!schritte.length) return null;
+  if(!Array.isArray(schritte)||!schritte.length) return null;
   return <div>
     {schritte.map((st,i)=>{
-      const o = (typeof st==="object" && st!==null);
+      const txt = v => (v==null||v===false) ? "" :
+        (typeof v==="object" ? (Array.isArray(v)?v.map(txt).join(", "):Object.values(v).map(txt).join(" – ")) : String(v));
+      const o = (typeof st==="object" && st!==null && !Array.isArray(st));
       const szene = o && SZENEN.includes(st.szene) ? st.szene : null;
-      const titel = o ? (st.titel||"") : "";
-      const text  = o ? (st.text||"") : String(st);
-      const zeit  = o ? st.zeit : null;
-      const tmp   = o ? st.temp : null;
+      const titel = o ? txt(st.titel) : "";
+      const text  = o ? txt(st.text)  : txt(st);
+      const zeit  = o ? txt(st.zeit)  : "";
+      const tmp   = o ? txt(st.temp)  : "";
       return (
         <div key={i} style={{display:"flex",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.s}`,alignItems:"flex-start"}}>
           {szene
@@ -131,7 +133,22 @@ function PBar({step}){
 }
 
 // ── Haupt-App ─────────────────────────────────────────────────────────────────
-export default function App() {
+class Grenze extends React.Component{
+  constructor(p){super(p);this.state={fehler:null};}
+  static getDerivedStateFromError(e){return {fehler:e};}
+  render(){
+    if(this.state.fehler) return <div style={{maxWidth:640,margin:"2rem auto",padding:"1rem",fontFamily:"-apple-system,sans-serif"}}>
+      <div style={{padding:"14px 16px",background:"#FCEBEB",color:"#A32D2D",borderRadius:10,borderLeft:"3px solid #E24B4A",fontSize:13,lineHeight:1.6}}>
+        <strong>Anzeigefehler.</strong> Das Rezept konnte nicht dargestellt werden.<br/>
+        <span style={{fontSize:12,opacity:.8}}>{String(this.state.fehler?.message||this.state.fehler)}</span>
+      </div>
+      <button onClick={()=>location.reload()} style={{marginTop:14,padding:"10px 20px",borderRadius:10,border:"none",background:"#D85A30",color:"#fff",fontWeight:600,fontSize:14,cursor:"pointer"}}>Neu laden</button>
+    </div>;
+    return this.props.children;
+  }
+}
+
+function App() {
   const [tab,setTab]=useState("k");
   const [step,setStep]=useState(0);
   const [level,setLevel]=useState(null);
@@ -730,7 +747,7 @@ ${SZ_LISTE}
           <div style={{marginBottom:"1.2rem"}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Zutaten (angepasst)</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-              {(adaptRes.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{z.menge}</strong> {z.zutat}</div>)}
+              {(adaptRes.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{typeof z==="object"&&z?String(z.menge??""):""}</strong> {typeof z==="object"&&z?String(z.zutat??""):String(z)}</div>)}
             </div>
           </div>
           <div style={{marginBottom:"1.2rem"}}>
@@ -768,7 +785,7 @@ ${SZ_LISTE}
           <div style={{marginBottom:"1.2rem"}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Zutaten</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-              {(recipe.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{z.menge}</strong> {z.zutat}</div>)}
+              {(recipe.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{typeof z==="object"&&z?String(z.menge??""):""}</strong> {typeof z==="object"&&z?String(z.zutat??""):String(z)}</div>)}
             </div>
           </div>
           <div style={{marginBottom:"1.2rem"}}>
@@ -1060,3 +1077,5 @@ Format (ein Objekt pro Tag):
     </div>
   );
 }
+
+export default function AppMitGrenze(){ return <Grenze><App/></Grenze>; }
