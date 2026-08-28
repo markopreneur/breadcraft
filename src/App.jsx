@@ -258,6 +258,9 @@ Mehle:${x.ml}|Charakter:${x.ch}|Einlagen:${x.ei}|Trieb:${x.tr}|Form:${x.fo}
 ${eq.includes("noknead")?"Mind. 1 No-Knead Rezept (nur rühren, lange Gare).":""}
     ${form==="stockbrot"?"STOCKBROT: Teig am Stock über Feuer/Grill, kein Ofen. stockbrot:true, backtemp:Lagerfeuer.":""}
 ${x.pfl?"PFLICHT in allen Rezepten: "+x.pfl:""}
+${x.tr==="sauerteig"?"ZWINGEND: alle 3 Vorschlaege sind reine Sauerteigbrote OHNE jede Hefe.":""}
+${x.tr==="hefe"?"ZWINGEND: alle 3 Vorschlaege nur mit Hefe, ohne Sauerteig.":""}
+${x.tr==="ohne"?"ZWINGEND: alle 3 Vorschlaege ohne Triebmittel - Fladenbrote.":""}
 Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["Tag"],"aktivzeit":"25 Min.","gesamtzeit":"3 Std.","backdauer":"45 Min.","backtemp":"250→220°C oder 'Lagerfeuer/Grill'","noknead":false,"stockbrot":false}]`;
     try{setCards(xj(await ai(p,null,3000)));}catch(e){setErrC(e.message);}
     setLdC(false);
@@ -268,13 +271,22 @@ Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["T
     const cd=cards[i];const x=ctx();
     const p=`Du bist Marcel Paa. NUR JSON-Objekt, keine Backticks.
 Rezept für "${cd.name}". Level:${x.lv}|Ofen:${x.of} ${x.temp}°C Bedampfung:${x.bd}|Mehle:${x.ml}
+Zeit:${x.zt}|Charakter:${x.ch}|Einlagen:${x.ei}|Form:${x.fo}
+TRIEBMITTEL: ${x.tr}
+${x.tr==="sauerteig"?"ZWINGEND: reines Sauerteigbrot. KEINE Hefe, kein Frischhefe, keine Trockenhefe in den Zutaten. Triebkraft kommt ausschliesslich aus dem Sauerteig, dafuer laengere Gehzeiten ansetzen.":""}
+${x.tr==="hefe"?"ZWINGEND: nur Hefe als Triebmittel, KEIN Sauerteig und kein Anstellgut.":""}
+${x.tr==="gemischt"?"Hefe UND Sauerteig zusammen verwenden.":""}
+${x.tr==="ohne"?"ZWINGEND: ohne jedes Triebmittel - Fladenbrot oder Tortilla.":""}
 ${cd.noknead?"No-Knead: nur rühren, keine Knetmaschine, lange Gare erklärt.":""}
-Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl abwiegen","text":"Max. 2 kurze Zeilen.","zeit":"5 Min.","temp":null}],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}
+Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}
 
 WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
 ${SZ_LISTE}
-"titel" max. 4 Woerter. "text" max. 2 kurze Zeilen. "zeit"/"temp" nur wenn relevant, sonst null.`;
-    try{const t=await ai(p,null,4000);const r=xj(t,"obj");
+"titel" max. 4 Woerter.
+"text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
+"zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
+"temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.`;
+    try{const t=await ai(p,null,5000);const r=xj(t,"obj");
     if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
     setRecipe(r);}catch(e){setRecipe({_e:e.message});}
     setLdR(false);
@@ -323,6 +335,7 @@ Ausstattung: ${x.eq}
 Mehle vorrätig: ${x.ml}
 ${x.pfl?"Pflicht-Mehle: "+x.pfl:""}
 ${eq.includes("noknead")?"Bevorzugt No-Knead Methode.":""}
+${x.tr==="sauerteig"?"ZWINGEND: als reines Sauerteigbrot umbauen, Hefe komplett streichen.":""}
 
 ORIGINALREZEPT:
 ${adaptInput||"(Siehe Foto)"}
@@ -336,14 +349,17 @@ ANPASSUNGSREGELN:
 6. Alle Änderungen im Feld "anpassungen" auflisten
 
 JSON-Format:
-{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl abwiegen","text":"Max. 2 kurze Zeilen.","zeit":"5 Min.","temp":null}],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}
+{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}
 
 WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
 ${SZ_LISTE}
-"titel" max. 4 Woerter. "text" max. 2 kurze Zeilen.`;
+"titel" max. 4 Woerter.
+"text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
+"zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
+"temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.`;
 
     try{
-      const txt=await ai(prompt,sys,3500,adaptImg?.b64,adaptImg?.mime);
+      const txt=await ai(prompt,sys,4500,adaptImg?.b64,adaptImg?.mime);
       setAdaptRes(xj(txt,"obj"));
       setShowAdapt(false);
       // Direkt als Rezept anzeigen
