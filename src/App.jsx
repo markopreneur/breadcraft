@@ -116,6 +116,17 @@ async function ai(prompt, sys=null, maxTok=1400, imgB64=null, imgMime=null) {
   if(!res.ok||d.error) throw new Error(d.error?.message||d.error?.type||`HTTP ${res.status}`);
   return (d.content||[]).map(b=>b.text||"").join("");
 }
+// Deterministische Kontrolle: enthaelt das Rezept ein verbotenes Triebmittel?
+const HEFE_RE=/\b(frisch|trocken|back)?hefe\b|yeast|germ\b/i;
+const ST_RE=/sauerteig|anstellgut|\bASG\b|levain|lievito|starter/i;
+function verstoss(r,trieb){
+  const z=JSON.stringify(r?.zutaten||[]);
+  if(trieb==="sauerteig" && HEFE_RE.test(z)) return "Hefe";
+  if(trieb==="hefe" && ST_RE.test(z)) return "Sauerteig";
+  if(trieb==="ohne" && (HEFE_RE.test(z)||ST_RE.test(z))) return "Triebmittel";
+  return null;
+}
+
 function xj(txt,t="arr"){
   const c=txt.replace(/^```json\s*/,"").replace(/^```\s*/,"").replace(/\s*```$/,"").trim();
   if(t==="arr"){const s=c.indexOf("["),e=c.lastIndexOf("]");if(s<0||e<0)throw new Error("Kein JSON-Array. Antwort: "+c.slice(0,300));return JSON.parse(c.slice(s,e+1));}
@@ -286,9 +297,19 @@ ${SZ_LISTE}
 "text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
 "zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
 "temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.`;
-    try{const t=await ai(p,null,5000);const r=xj(t,"obj");
-    if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
-    setRecipe(r);}catch(e){setRecipe({_e:e.message});}
+    try{
+      let t=await ai(p,null,5000); let r=xj(t,"obj");
+      if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
+      // Kontrolle: falsches Triebmittel? Dann einmal gezielt nachfassen.
+      const v=verstoss(r,trieb);
+      if(v){
+        const korr=p+`\n\nKORREKTUR: Dein vorheriger Entwurf enthielt ${v} in den Zutaten. Das widerspricht der Vorgabe "${trieb}". Erstelle das Rezept neu, ohne ${v}, und passe die Gehzeiten entsprechend an.`;
+        const t2=await ai(korr,null,5000); const r2=xj(t2,"obj");
+        if(r2.zutaten?.length&&r2.schritte?.length&&!verstoss(r2,trieb)) r=r2;
+        else r={...(r2.zutaten?.length?r2:r), _warnung:`Achtung: enthaelt moeglicherweise ${v}, obwohl "${trieb}" gewaehlt wurde.`};
+      }
+      setRecipe(r);
+    }catch(e){setRecipe({_e:e.message});}
     setLdR(false);
   };
 
@@ -793,6 +814,7 @@ ${SZ_LISTE}
               </div>
             ))}
           </div>
+          {recipe._warnung&&<div style={{...box(C.rd,C.rl,"#E24B4A"),marginBottom:"1rem"}}>{recipe._warnung}</div>}
           {recipe.bedampfung_hinweis&&<div style={{...box(C.bd,C.bl,"#185FA5"),marginBottom:"1rem"}}><strong>Bedampfung:</strong> {recipe.bedampfung_hinweis}</div>}
           {recipe.vorteig&&<div style={{marginBottom:"1.2rem"}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Vorteig / Vorstufe</div>
