@@ -48,14 +48,44 @@ const SZENEN=["zutaten_wiegen","mehl_schuessel","wasser_zugeben","salz_zugeben",
 "fladen_pfanne","stockbrot","abkuehlen","anschneiden","fertig_laib","fertig_scheiben"];
 const SZ_LISTE=SZENEN.join(", ");
 
+// ── Prompt-Bausteine ─────────────────────────────────────────────────────────
+// Diese Regeln gelten fuer JEDEN Rezept-Call. Sie stehen bewusst nur hier und
+// werden in die Prompts interpoliert - beim Triebmittel-Bug lief die Logik
+// auseinander, weil dieselbe Regel an zwei Stellen gepflegt werden musste.
+const ZUTATEN_REGELN=`STRUKTUR-REGELN fuer "zutaten" und "vorstufen" - keine Abweichung erlaubt:
+
+"zutaten" ist eine FLACHE Liste und enthaelt AUSSCHLIESSLICH die Zutaten des Hauptteigs.
+Jedes Element ist ein Objekt mit genau diesen drei Feldern, alle drei sind Strings:
+{"menge":"500","einheit":"g","name":"Weizenmehl 550"}
+NIEMALS ein Objekt mit einer verschachtelten "zutaten"-Liste in "zutaten" ablegen.
+NIEMALS Gruppen, Ueberschriften oder Zwischentitel als Element von "zutaten" ablegen.
+
+JEDE Vorstufe - Sauerteig-Vorteig, Poolish, Biga, Bruehstueck, Quellstueck,
+Kochstueck, Autolyseteig - gehoert in das eigene Feld "vorstufen", NIEMALS in "zutaten".
+"vorstufen" ist ein Array von Objekten dieser Form:
+{"name":"Sauerteig-Vorteig","zeit":"12 Std.","temp":"24 °C","zutaten":[{"menge":"100","einheit":"g","name":"Roggenmehl 1150"}]}
+Die "zutaten" innerhalb einer Vorstufe sind ebenfalls flach: nur menge/einheit/name.
+Gibt es keine Vorstufe, ist "vorstufen" ein leeres Array [].
+
+Alle uebrigen Felder ("name","titel","text","zeit","temp","tipp","backtemp",
+"backdauer","bedampfung_hinweis") sind IMMER Strings - niemals Objekte, niemals Arrays.`;
+
+const SCHRITT_REGELN=`WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
+${SZ_LISTE}
+"titel" max. 4 Woerter.
+"text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
+"zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
+"temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.
+Wird eine Vorstufe verwendet, beschreiben die Schritte auch ihr Ansetzen und ihre Verarbeitung.`;
+
+const KARTEN_REGELN=`Alle Kartenfelder ("name","schwierigkeit","kurz","aktivzeit","gesamtzeit","backdauer","backtemp") sind IMMER Strings, "tags" ist ein Array von Strings. Niemals Objekte.`;
+
 // Ein Schritt: Illustration links, Text rechts, Badges darunter.
 function StepList({schritte}){
   if(!Array.isArray(schritte)||!schritte.length) return null;
   return <div>
     {schritte.map((st,i)=>{
-      const txt = v => (v==null||v===false) ? "" :
-        (typeof v==="object" ? (Array.isArray(v)?v.map(txt).join(", "):Object.values(v).map(txt).join(" – ")) : String(v));
-      const o = (typeof st==="object" && st!==null && !Array.isArray(st));
+      const o = isObj(st);
       const szene = o && SZENEN.includes(st.szene) ? st.szene : null;
       const titel = o ? txt(st.titel) : "";
       const text  = o ? txt(st.text)  : txt(st);
@@ -98,6 +128,116 @@ const btnS={padding:"10px 20px",borderRadius:10,fontSize:14,cursor:"pointer",bac
 const box=(col,bg,bl)=>({padding:"11px 14px",background:bg,borderRadius:9,fontSize:13,color:col,borderLeft:`3px solid ${bl}`,marginBottom:"0.8rem"});
 const GL={fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:C.h,margin:"1rem 0 6px"};
 const NAV={display:"flex",gap:10,marginTop:"1.4rem",flexWrap:"wrap"};
+const SEC={fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`};
+
+// ── Defensives Rendering ──────────────────────────────────────────────────────
+// Die KI liefert gelegentlich ein Objekt, wo ein String erwartet wird. Ein Objekt
+// als React-Child wirft Error #31 und reisst die ganze Ansicht ab. Deshalb geht
+// KEIN KI-Feld ungeprueft ins JSX - immer durch txt(). Siehe KNOWN_ISSUES.md.
+function isObj(v){ return typeof v==="object" && v!==null && !Array.isArray(v); }
+
+function txt(v){
+  if(v==null||v===false) return "";
+  if(Array.isArray(v)) return v.map(txt).filter(Boolean).join(", ");
+  if(typeof v==="object") return Object.values(v).map(txt).filter(Boolean).join(" – ");
+  return String(v);
+}
+
+// Ein Gruppen-Objekt ist alles, was selbst wieder eine zutaten-Liste traegt.
+function istGruppe(z){ return isObj(z) && Array.isArray(z.zutaten); }
+
+// Eine einzelne Zutat auf {menge,name} bringen. Die KI schreibt den Namen mal
+// als "zutat", mal als "name", und die Menge mal als "500 g", mal als 500 + "g".
+function zutatZeile(z){
+  if(!isObj(z)) return {menge:"", name:txt(z)};
+  const menge=[z.menge,z.einheit].map(txt).filter(Boolean).join(" ");
+  const name=txt(z.zutat ?? z.name ?? z.bezeichnung);
+  return {menge, name};
+}
+
+// Faltet Gruppen-Objekte auf, die faelschlich im flachen zutaten-Array stecken:
+// {name,zeit,temp,zutaten:[...]} wird zu einer Zwischenzeile + den flachen
+// Zutaten dahinter. Rekursionstiefe begrenzt, damit kaputtes JSON nicht haengt.
+function normZutaten(list,tiefe=0){
+  if(!Array.isArray(list)) return list==null ? [] : normZutaten([list],tiefe);
+  const out=[];
+  for(const z of list){
+    if(istGruppe(z) && tiefe<3){
+      out.push({typ:"gruppe",
+        name: txt(z.name ?? z.titel) || "Vorstufe",
+        meta: [txt(z.zeit),txt(z.temp)].filter(Boolean).join(" · ")});
+      out.push(...normZutaten(z.zutaten,tiefe+1));
+    } else {
+      const r=zutatZeile(z);
+      if(r.menge||r.name) out.push({typ:"zutat",...r});
+    }
+  }
+  return out;
+}
+
+// Vorstufen aus dem eigenen Feld "vorstufen" plus dem alten Feld "vorteig"
+// (das frueher mal ein String, mal ein Objekt war - genau das war Error #31).
+// Gruppen-Objekte aus "zutaten" bleiben hier bewusst aussen vor: die faltet
+// normZutaten an Ort und Stelle auf, sonst stuende alles doppelt in der Ansicht.
+function normVorstufen(r){
+  if(!isObj(r)) return [];
+  const roh=[];
+  const sammle=v=>{ if(v==null||v===false||v==="") return;
+    if(Array.isArray(v)) v.forEach(sammle); else roh.push(v); };
+  sammle(r.vorstufen); sammle(r.vorteig);
+  const seen=new Set();
+  return roh.map(v=>isObj(v)
+    ? {name:txt(v.name ?? v.titel), zeit:txt(v.zeit), temp:txt(v.temp),
+       text:txt(v.text ?? v.beschreibung ?? v.hinweis), zutaten:normZutaten(v.zutaten)}
+    : {name:"", zeit:"", temp:"", text:txt(v), zutaten:[]}
+  ).filter(v=>{
+    if(!(v.name||v.text||v.zutaten.length)) return false;
+    const k=(v.name||v.text).toLowerCase().trim();
+    if(seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+
+// Zutaten-Raster. Gruppennamen laufen ueber die volle Breite.
+function ZutatenListe({rows}){
+  if(!rows.length) return null;
+  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
+    {rows.map((z,i)=> z.typ==="gruppe"
+      ? <div key={i} style={{gridColumn:"1 / -1",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".05em",color:C.gd,background:C.gl,borderRadius:7,padding:"5px 9px",marginTop:i?6:0}}>
+          {z.name}{z.meta&&<span style={{fontWeight:400,textTransform:"none",letterSpacing:0,color:C.h,marginLeft:6}}>{z.meta}</span>}
+        </div>
+      : <div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}>
+          <strong>{z.menge}</strong> {z.name}
+        </div>)}
+  </div>;
+}
+
+// Vorstufen als eigener Block ueber dem Hauptteig, mit Zeit und Temperatur.
+function RezeptZutaten({rezept,zusatz=""}){
+  const vs=normVorstufen(rezept);
+  const rows=normZutaten(rezept?.zutaten);
+  if(!vs.length&&!rows.length) return null;
+  return <>
+    {vs.length>0&&<div style={{marginBottom:"1.2rem"}}>
+      <div style={SEC}>Vorstufen</div>
+      {vs.map((v,i)=>(
+        <div key={i} style={{border:`1.5px solid ${C.b}`,borderRadius:10,padding:"10px 12px",marginBottom:8,background:C.gl}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            {v.name&&<span style={{fontSize:13,fontWeight:700,color:C.gd}}>{v.name}</span>}
+            {v.zeit&&<span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:7,background:"#EFF4F7",color:"#2E4A5A"}}>◷ {v.zeit}</span>}
+            {v.temp&&<span style={{fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:7,background:C.ol,color:C.od}}>◈ {v.temp}</span>}
+          </div>
+          {v.text&&<div style={{fontSize:13,color:C.gd,lineHeight:1.6,marginTop:7}}>{v.text}</div>}
+          {v.zutaten.length>0&&<div style={{marginTop:8}}><ZutatenListe rows={v.zutaten}/></div>}
+        </div>
+      ))}
+    </div>}
+    {rows.length>0&&<div style={{marginBottom:"1.2rem"}}>
+      <div style={SEC}>{vs.length?"Hauptteig":"Zutaten"}{zusatz}</div>
+      <ZutatenListe rows={rows}/>
+    </div>}
+  </>;
+}
 
 // ── API ───────────────────────────────────────────────────────────────────────
 async function ai(prompt, sys=null, maxTok=1400, imgB64=null, imgMime=null) {
@@ -120,7 +260,7 @@ async function ai(prompt, sys=null, maxTok=1400, imgB64=null, imgMime=null) {
 const HEFE_RE=/\b(frisch|trocken|back)?hefe\b|yeast|germ\b/i;
 const ST_RE=/sauerteig|anstellgut|\bASG\b|levain|lievito|starter/i;
 function verstoss(r,trieb){
-  const z=JSON.stringify(r?.zutaten||[]);
+  const z=JSON.stringify([r?.zutaten||[], r?.vorstufen||[], r?.vorteig??null]);
   if(trieb==="sauerteig" && HEFE_RE.test(z)) return "Hefe";
   if(trieb==="hefe" && ST_RE.test(z)) return "Sauerteig";
   if(trieb==="ohne" && (HEFE_RE.test(z)||ST_RE.test(z))) return "Triebmittel";
@@ -272,7 +412,9 @@ ${x.pfl?"PFLICHT in allen Rezepten: "+x.pfl:""}
 ${x.tr==="sauerteig"?"ZWINGEND: alle 3 Vorschlaege sind reine Sauerteigbrote OHNE jede Hefe.":""}
 ${x.tr==="hefe"?"ZWINGEND: alle 3 Vorschlaege nur mit Hefe, ohne Sauerteig.":""}
 ${x.tr==="ohne"?"ZWINGEND: alle 3 Vorschlaege ohne Triebmittel - Fladenbrote.":""}
-Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["Tag"],"aktivzeit":"25 Min.","gesamtzeit":"3 Std.","backdauer":"45 Min.","backtemp":"250→220°C oder 'Lagerfeuer/Grill'","noknead":false,"stockbrot":false}]`;
+Format:[{"name":"Brot","schwierigkeit":"Anfänger","kurz":"2 Sätze.","tags":["Tag"],"aktivzeit":"25 Min.","gesamtzeit":"3 Std.","backdauer":"45 Min.","backtemp":"250→220°C oder 'Lagerfeuer/Grill'","noknead":false,"stockbrot":false}]
+
+${KARTEN_REGELN}`;
     try{setCards(xj(await ai(p,null,3000)));}catch(e){setErrC(e.message);}
     setLdC(false);
   };
@@ -289,14 +431,11 @@ ${x.tr==="hefe"?"ZWINGEND: nur Hefe als Triebmittel, KEIN Sauerteig und kein Ans
 ${x.tr==="gemischt"?"Hefe UND Sauerteig zusammen verwenden.":""}
 ${x.tr==="ohne"?"ZWINGEND: ohne jedes Triebmittel - Fladenbrot oder Tortilla.":""}
 ${cd.noknead?"No-Knead: nur rühren, keine Knetmaschine, lange Gare erklärt.":""}
-Format:{"name":"","vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Mehl"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}
+Format:{"name":"","vorstufen":[],"zutaten":[{"menge":"500","einheit":"g","name":"Weizenmehl 550"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"250→220°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis zu ${x.bd}","tipp":"Tipp"}
 
-WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
-${SZ_LISTE}
-"titel" max. 4 Woerter.
-"text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
-"zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
-"temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.`;
+${SCHRITT_REGELN}
+
+${ZUTATEN_REGELN}`;
     try{
       let t=await ai(p,null,5000); let r=xj(t,"obj");
       if(!r.zutaten?.length||!r.schritte?.length)throw new Error("Felder fehlen. Antwort: "+t.slice(0,400));
@@ -370,14 +509,11 @@ ANPASSUNGSREGELN:
 6. Alle Änderungen im Feld "anpassungen" auflisten
 
 JSON-Format:
-{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorteig":null,"zutaten":[{"menge":"500 g","zutat":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}
+{"name":"Rezeptname (angepasst)","original_name":"Originalname falls erkennbar","anpassungen":["Was wurde geändert und warum"],"vorstufen":[],"zutaten":[{"menge":"500","einheit":"g","name":"Weizenmehl 550 (statt 00-Mehl)"}],"schritte":[{"szene":"mehl_schuessel","titel":"Mehl und Wasser","text":"400 g Dinkelmehl 630 und 200 g Dinkel Vollkorn mit 420 g Wasser verruehren, bis kein trockenes Mehl mehr sichtbar ist.","zeit":"5 Min.","temp":"26 °C"}],"backtemp":"${Math.min(x.temp,250)}→${Math.min(x.temp-30,220)}°C","backdauer":"45 Min.","bedampfung_hinweis":"Hinweis für ${x.bd}","aktivzeit":"30 Min.","gesamtzeit":"4 Std.","tipp":"Profi-Tipp von Marcel Paa"}
 
-WICHTIG zu "szene": pro Schritt GENAU EINE ID aus dieser Liste, nichts anderes:
-${SZ_LISTE}
-"titel" max. 4 Woerter.
-"text": max. 2 Zeilen, aber IMMER mit den konkreten Mengen in Gramm, die in DIESEM Schritt verarbeitet werden - also "400 g Dinkelmehl 630 und 420 g Wasser", nicht "Mehl und Wasser". Die Summe aller Schritt-Mengen muss zur Zutatenliste passen.
-"zeit": IMMER angeben, wenn der Schritt eine Dauer hat - Kneten, Ruhen, Autolyse, Stockgare, Stueckgare, kalte Gare, Backen, Abkuehlen. Nur bei reinen Handgriffen ohne Wartezeit null.
-"temp": bei Teigtemperatur, Raumtemperatur der Gare, Kuehlschranktemperatur und Backtemperatur angeben, sonst null.`;
+${SCHRITT_REGELN}
+
+${ZUTATEN_REGELN}`;
 
     try{
       const txt=await ai(prompt,sys,4500,adaptImg?.b64,adaptImg?.mime);
@@ -624,20 +760,20 @@ ${SZ_LISTE}
               <div key={i} onClick={()=>openCard(i)} style={{border:cidx===i?`2px solid ${C.o}`:`1.5px solid ${C.b}`,borderRadius:12,padding:"1rem",marginBottom:10,background:cidx===i?C.ol:C.w,cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}>
                   <div style={{fontSize:15,fontWeight:700}}>
-                    {r.noknead&&<span style={{fontSize:11,background:C.gl,color:C.gd,padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>No-Knead</span>}
-                    {r.stockbrot&&<span style={{fontSize:11,background:"#FFF3CD",color:"#7D4E00",padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>🔥 Stockbrot</span>}
-                    {r.name}
+                    {r?.noknead&&<span style={{fontSize:11,background:C.gl,color:C.gd,padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>No-Knead</span>}
+                    {r?.stockbrot&&<span style={{fontSize:11,background:"#FFF3CD",color:"#7D4E00",padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>🔥 Stockbrot</span>}
+                    {txt(r?.name)}
                   </div>
-                  <div style={{fontSize:11,padding:"3px 9px",borderRadius:11,fontWeight:700,background:r.schwierigkeit==="Anfänger"?"#EAF3DE":r.schwierigkeit==="Mittel"?"#FAEEDA":"#FCEBEB",color:r.schwierigkeit==="Anfänger"?"#3B6D11":r.schwierigkeit==="Mittel"?"#854F0B":"#A32D2D"}}>{r.schwierigkeit}</div>
+                  <div style={{fontSize:11,padding:"3px 9px",borderRadius:11,fontWeight:700,background:txt(r?.schwierigkeit)==="Anfänger"?"#EAF3DE":txt(r?.schwierigkeit)==="Mittel"?"#FAEEDA":"#FCEBEB",color:txt(r?.schwierigkeit)==="Anfänger"?"#3B6D11":txt(r?.schwierigkeit)==="Mittel"?"#854F0B":"#A32D2D"}}>{txt(r?.schwierigkeit)}</div>
                 </div>
-                <div style={{fontSize:13,color:C.m,marginBottom:8,lineHeight:1.55}}>{r.kurz}</div>
+                <div style={{fontSize:13,color:C.m,marginBottom:8,lineHeight:1.55}}>{txt(r?.kurz)}</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
-                  {(r.tags||[]).map(t=><div key={t} style={{fontSize:11,padding:"2px 7px",border:`1px solid ${C.b}`,borderRadius:10,color:C.h}}>{t}</div>)}
+                  {(Array.isArray(r?.tags)?r.tags:[]).map((t,ti)=><div key={ti} style={{fontSize:11,padding:"2px 7px",border:`1px solid ${C.b}`,borderRadius:10,color:C.h}}>{txt(t)}</div>)}
                 </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:10,paddingTop:8,borderTop:`1px solid ${C.s}`,fontSize:12,color:C.h}}>
-                  <span>⏱ Aktiv: <strong style={{color:C.t}}>{r.aktivzeit}</strong></span>
-                  <span>🕐 Gesamt: <strong style={{color:C.t}}>{r.gesamtzeit}</strong></span>
-                  <span>🔥 {r.backdauer} bei {r.backtemp}</span>
+                  <span>⏱ Aktiv: <strong style={{color:C.t}}>{txt(r?.aktivzeit)}</strong></span>
+                  <span>🕐 Gesamt: <strong style={{color:C.t}}>{txt(r?.gesamtzeit)}</strong></span>
+                  <span>🔥 {txt(r?.backdauer)} bei {txt(r?.backtemp)}</span>
                 </div>
               </div>
             ))}
@@ -748,7 +884,7 @@ ${SZ_LISTE}
         {ldR&&<div>
           <div style={{display:"flex",gap:12,marginBottom:"1.2rem",paddingBottom:"1.2rem",borderBottom:`1px solid ${C.b}`}}>
             <div style={{fontSize:28}}>🍞</div>
-            <div><div style={{fontSize:17,fontWeight:700}}>{cards[cidx]?.name}</div><div style={{fontSize:13,color:C.h}}>{cards[cidx]?.kurz}</div></div>
+            <div><div style={{fontSize:17,fontWeight:700}}>{txt(cards[cidx]?.name)}</div><div style={{fontSize:13,color:C.h}}>{txt(cards[cidx]?.kurz)}</div></div>
           </div>
           <Load t="Vollständiges Rezept wird geladen…"/>
         </div>}
@@ -757,41 +893,32 @@ ${SZ_LISTE}
           <div style={{display:"flex",gap:12,marginBottom:"1.2rem",paddingBottom:"1.2rem",borderBottom:`1px solid ${C.b}`}}>
             <div style={{fontSize:28}}>🎯</div>
             <div>
-              <div style={{fontSize:17,fontWeight:700}}>{adaptRes.name}</div>
-              {adaptRes.original_name&&<div style={{fontSize:12,color:C.h,marginTop:2}}>Basiert auf: {adaptRes.original_name}</div>}
+              <div style={{fontSize:17,fontWeight:700}}>{txt(adaptRes.name)}</div>
+              {adaptRes.original_name&&<div style={{fontSize:12,color:C.h,marginTop:2}}>Basiert auf: {txt(adaptRes.original_name)}</div>}
             </div>
           </div>
           {/* Anpassungen */}
-          {adaptRes.anpassungen?.length>0&&<div style={{...box(C.od,C.ol,C.o),marginBottom:"1rem"}}>
+          {Array.isArray(adaptRes.anpassungen)&&adaptRes.anpassungen.length>0&&<div style={{...box(C.od,C.ol,C.o),marginBottom:"1rem"}}>
             <div style={{fontWeight:700,marginBottom:6}}>Was Marcel Paa angepasst hat:</div>
             <ul style={{marginLeft:16,lineHeight:1.8}}>
-              {adaptRes.anpassungen.map((a,i)=><li key={i}>{a}</li>)}
+              {adaptRes.anpassungen.map((a,i)=><li key={i}>{txt(a)}</li>)}
             </ul>
           </div>}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:"1.2rem"}}>
             {[["Aktivzeit",adaptRes.aktivzeit],["Gesamtzeit",adaptRes.gesamtzeit],["Backen",adaptRes.backdauer]].map(([l,vv])=>(
               <div key={l} style={{background:C.s,borderRadius:9,padding:9,textAlign:"center"}}>
                 <div style={{fontSize:10,color:C.h,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>{l}</div>
-                <div style={{fontSize:14,fontWeight:700}}>{vv}</div>
+                <div style={{fontSize:14,fontWeight:700}}>{txt(vv)}</div>
               </div>
             ))}
           </div>
-          {adaptRes.bedampfung_hinweis&&<div style={{...box(C.bd,C.bl,"#185FA5"),marginBottom:"1rem"}}><strong>Bedampfung:</strong> {adaptRes.bedampfung_hinweis}</div>}
-          {adaptRes.vorteig&&<div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Vorteig / Vorstufe</div>
-            <div style={box(C.gd,C.gl,C.g)}>{adaptRes.vorteig}</div>
-          </div>}
+          {adaptRes.bedampfung_hinweis&&<div style={{...box(C.bd,C.bl,"#185FA5"),marginBottom:"1rem"}}><strong>Bedampfung:</strong> {txt(adaptRes.bedampfung_hinweis)}</div>}
+          <RezeptZutaten rezept={adaptRes} zusatz=" (angepasst)"/>
           <div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Zutaten (angepasst)</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-              {(adaptRes.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{typeof z==="object"&&z?String(z.menge??""):""}</strong> {typeof z==="object"&&z?String(z.zutat??""):String(z)}</div>)}
-            </div>
-          </div>
-          <div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Schritt für Schritt</div>
+            <div style={SEC}>Schritt für Schritt</div>
             <StepList schritte={adaptRes.schritte}/>
           </div>
-          {adaptRes.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {adaptRes.tipp}</div>}
+          {adaptRes.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {txt(adaptRes.tipp)}</div>}
         </div>}
 
         {!ldR&&recipe&&!recipe._e&&<div>
@@ -801,36 +928,27 @@ ${SZ_LISTE}
               <div style={{fontSize:17,fontWeight:700}}>
                 {cards[cidx]?.noknead&&<span style={{fontSize:11,background:C.gl,color:C.gd,padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>No-Knead</span>}
               {cards[cidx]?.stockbrot&&<span style={{fontSize:11,background:"#FFF3CD",color:"#7D4E00",padding:"2px 6px",borderRadius:7,fontWeight:700,marginRight:6}}>🔥 Stockbrot</span>}
-                {recipe.name}
+                {txt(recipe.name)}
               </div>
-              <div style={{fontSize:13,color:C.h}}>{cards[cidx]?.kurz}</div>
+              <div style={{fontSize:13,color:C.h}}>{txt(cards[cidx]?.kurz)}</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:"1.2rem"}}>
             {[["Aktivzeit",cards[cidx]?.aktivzeit],["Gesamtzeit",cards[cidx]?.gesamtzeit],["Backen",recipe.backdauer]].map(([l,v])=>(
               <div key={l} style={{background:C.s,borderRadius:9,padding:9,textAlign:"center"}}>
                 <div style={{fontSize:10,color:C.h,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>{l}</div>
-                <div style={{fontSize:14,fontWeight:700}}>{v}</div>
+                <div style={{fontSize:14,fontWeight:700}}>{txt(v)}</div>
               </div>
             ))}
           </div>
-          {recipe._warnung&&<div style={{...box(C.rd,C.rl,"#E24B4A"),marginBottom:"1rem"}}>{recipe._warnung}</div>}
-          {recipe.bedampfung_hinweis&&<div style={{...box(C.bd,C.bl,"#185FA5"),marginBottom:"1rem"}}><strong>Bedampfung:</strong> {recipe.bedampfung_hinweis}</div>}
-          {recipe.vorteig&&<div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Vorteig / Vorstufe</div>
-            <div style={box(C.gd,C.gl,C.g)}>{recipe.vorteig}</div>
-          </div>}
+          {recipe._warnung&&<div style={{...box(C.rd,C.rl,"#E24B4A"),marginBottom:"1rem"}}>{txt(recipe._warnung)}</div>}
+          {recipe.bedampfung_hinweis&&<div style={{...box(C.bd,C.bl,"#185FA5"),marginBottom:"1rem"}}><strong>Bedampfung:</strong> {txt(recipe.bedampfung_hinweis)}</div>}
+          <RezeptZutaten rezept={recipe}/>
           <div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Zutaten</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-              {(recipe.zutaten||[]).map((z,i)=><div key={i} style={{fontSize:13,padding:"6px 9px",background:C.bg,borderRadius:7,color:C.m,border:`1px solid ${C.s}`}}><strong>{typeof z==="object"&&z?String(z.menge??""):""}</strong> {typeof z==="object"&&z?String(z.zutat??""):String(z)}</div>)}
-            </div>
-          </div>
-          <div style={{marginBottom:"1.2rem"}}>
-            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.h,marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.s}`}}>Schritt für Schritt</div>
+            <div style={SEC}>Schritt für Schritt</div>
             <StepList schritte={recipe.schritte}/>
           </div>
-          {recipe.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {recipe.tipp}</div>}
+          {recipe.tipp&&<div style={box(C.gd,C.gl,C.g)}><strong>Profi-Tipp von Marcel Paa:</strong> {txt(recipe.tipp)}</div>}
         </div>}
         {!ldR&&recipe?._e&&<Err m={recipe._e}/>}
         <div style={{...NAV,marginTop:"1.8rem",paddingTop:"1.4rem",borderTop:`1px solid ${C.b}`}}>
@@ -856,20 +974,20 @@ ${SZ_LISTE}
         </div>
         <Err m={zpErr}/>
         {zpLd&&<Load t="Zeitplan wird berechnet…"/>}
-        {zpPlan&&<div style={{border:`1.5px solid ${C.b}`,borderRadius:11,background:C.w,overflow:"hidden",marginTop:"0.8rem"}}>
+        {zpPlan&&Array.isArray(zpPlan.sc)&&<div style={{border:`1.5px solid ${C.b}`,borderRadius:11,background:C.w,overflow:"hidden",marginTop:"0.8rem"}}>
           <div style={{padding:"10px 14px",background:C.s,borderBottom:`1px solid ${C.b}`,fontWeight:700,fontSize:14,display:"flex",justifyContent:"space-between"}}>
-            <span>📅 {zpPlan.typ}</span><span style={{fontSize:12,fontWeight:400,color:C.h}}>Fertig: {zpTime} Uhr</span>
+            <span>📅 {txt(zpPlan.typ)}</span><span style={{fontSize:12,fontWeight:400,color:C.h}}>Fertig: {zpTime} Uhr</span>
           </div>
           {zpPlan.sc.map((sc,i)=>(
             <div key={i} style={{display:"flex",gap:10,padding:"9px 14px",borderBottom:i<zpPlan.sc.length-1?`1px solid ${C.bg}`:"none",alignItems:"flex-start",fontSize:13}}>
-              <div style={{fontWeight:700,color:C.o,minWidth:52,fontSize:12,paddingTop:2}}>{sc.zeit}</div>
+              <div style={{fontWeight:700,color:C.o,minWidth:52,fontSize:12,paddingTop:2}}>{txt(sc?.zeit)}</div>
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:4}}>
-                <div style={{width:9,height:9,borderRadius:"50%",background:sc.passiv?C.b2:C.o}}/>
+                <div style={{width:9,height:9,borderRadius:"50%",background:sc?.passiv?C.b2:C.o}}/>
                 {i<zpPlan.sc.length-1&&<div style={{width:2,background:C.s,flex:1,minHeight:14,marginTop:3}}/>}
               </div>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,marginBottom:1}}>{sc.phase} <span style={{fontSize:11,fontWeight:400,color:C.h}}>({sc.dauer})</span></div>
-                <div style={{fontSize:12,color:sc.passiv?C.h:C.m,fontStyle:sc.passiv?"italic":"normal"}}>{sc.detail}</div>
+                <div style={{fontWeight:700,marginBottom:1}}>{txt(sc?.phase)} <span style={{fontSize:11,fontWeight:400,color:C.h}}>({txt(sc?.dauer)})</span></div>
+                <div style={{fontSize:12,color:sc?.passiv?C.h:C.m,fontStyle:sc?.passiv?"italic":"normal"}}>{txt(sc?.detail)}</div>
               </div>
             </div>
           ))}
@@ -950,27 +1068,27 @@ Format (ein Objekt pro Tag):
           <div style={{display:"flex",gap:5,marginBottom:"1rem",flexWrap:"wrap"}}>
             {stPlan.map((t,i)=>(
               <div key={i} onClick={()=>setStTag(i+1)} style={{padding:"5px 11px",borderRadius:16,fontSize:12,fontWeight:700,cursor:"pointer",border:`1.5px solid ${stTag===i+1?C.g:C.b}`,background:stTag===i+1?C.gl:C.w,color:stTag===i+1?C.gd:C.h}}>
-                Tag {t.tag}
+                Tag {txt(t?.tag)}
               </div>
             ))}
           </div>
           {/* Tagesdetail */}
-          {stPlan.filter(t=>t.tag===stTag).map((t,i)=>(
+          {stPlan.filter(t=>Number(t?.tag)===stTag).map((t,i)=>(
             <div key={i} style={{border:`1.5px solid ${C.b}`,borderRadius:12,overflow:"hidden",marginBottom:"1rem"}}>
               <div style={{padding:"12px 14px",background:C.s,borderBottom:`1px solid ${C.b}`}}>
-                <div style={{fontSize:15,fontWeight:700}}>{t.titel}</div>
-                <div style={{fontSize:12,color:C.h,marginTop:2}}>⏰ {t.uhrzeit} Uhr</div>
+                <div style={{fontSize:15,fontWeight:700}}>{txt(t?.titel)}</div>
+                <div style={{fontSize:12,color:C.h,marginTop:2}}>⏰ {txt(t?.uhrzeit)} Uhr</div>
               </div>
               <div style={{padding:"14px"}}>
                 <div style={GL}>Was du tust</div>
-                <div style={{fontSize:14,color:C.t,marginBottom:"0.8rem",lineHeight:1.6,fontWeight:500}}>{t.aktion}</div>
+                <div style={{fontSize:14,color:C.t,marginBottom:"0.8rem",lineHeight:1.6,fontWeight:500}}>{txt(t?.aktion)}</div>
                 <div style={GL}>Mengen</div>
-                <div style={{...box(C.gd,C.gl,C.g),marginBottom:"0.8rem"}}>{t.menge}</div>
+                <div style={{...box(C.gd,C.gl,C.g),marginBottom:"0.8rem"}}>{txt(t?.menge)}</div>
                 <div style={GL}>Was du danach siehst</div>
-                <div style={{fontSize:13,color:C.m,marginBottom:"0.8rem",lineHeight:1.5}}>{t.ziel}</div>
-                {t.zeichen_bereit&&<><div style={GL}>Fortschritts-Zeichen</div>
-                <div style={{fontSize:13,color:C.m,marginBottom:"0.8rem",lineHeight:1.5}}>🔍 {t.zeichen_bereit}</div></>}
-                <div style={{...box(C.od,C.ol,C.o)}}><strong>Marcel Paas Tipp:</strong> {t.tipp}</div>
+                <div style={{fontSize:13,color:C.m,marginBottom:"0.8rem",lineHeight:1.5}}>{txt(t?.ziel)}</div>
+                {t?.zeichen_bereit&&<><div style={GL}>Fortschritts-Zeichen</div>
+                <div style={{fontSize:13,color:C.m,marginBottom:"0.8rem",lineHeight:1.5}}>🔍 {txt(t.zeichen_bereit)}</div></>}
+                <div style={{...box(C.od,C.ol,C.o)}}><strong>Marcel Paas Tipp:</strong> {txt(t?.tipp)}</div>
               </div>
             </div>
           ))}
